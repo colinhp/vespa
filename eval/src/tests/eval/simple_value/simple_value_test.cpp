@@ -62,4 +62,25 @@ TEST(SimpleValueTest, simple_value_can_be_built_and_inspected) {
     EXPECT_FALSE(view->next_result({&label}, subspace));
 }
 
+TEST(SimpleValueTest, join_traverse_plan_can_be_created) {
+    auto lhs = ValueType::from_spec("tensor(a{},b[6],c[5],e[3],f[2],g{})");
+    auto rhs = ValueType::from_spec("tensor(a{},b[6],c[5],d[4],h{})");
+    auto plan = JoinTraversePlan(lhs, rhs);
+    std::vector<size_t> expect_loop = {30,4,6};
+    std::vector<size_t> expect_lhs_stride = {6,0,1};
+    std::vector<size_t> expect_rhs_stride = {4,1,0};
+    EXPECT_EQ(plan.loop_cnt, expect_loop);
+    EXPECT_EQ(plan.lhs_stride, expect_lhs_stride);
+    EXPECT_EQ(plan.rhs_stride, expect_rhs_stride);
+}
+
+TEST(SimpleValueTest, join_mapped_overlap_can_be_created) {
+    auto lhs = ValueType::from_spec("tensor(a{},b[6],c[5],e[3],f[2],g{})");
+    auto rhs = ValueType::from_spec("tensor(a{},b[6],c[5],d[4],h{})");
+    auto overlap = JoinMappedOverlap(lhs, rhs);
+    using SRC = JoinMappedOverlap::Source;
+    std::vector<SRC> expect_sources = {SRC::BOTH,SRC::LHS,SRC::RHS};
+    EXPECT_EQ(overlap.sources, expect_sources);
+}
+
 GTEST_MAIN_RUN_ALL_TESTS()

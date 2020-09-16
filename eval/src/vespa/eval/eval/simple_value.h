@@ -192,6 +192,31 @@ protected:
 };
 
 /**
+ * Plan for how to traverse two partially overlapping dense subspaces
+ * in parallel, identifying all matching cell index combinations, in
+ * the exact order the joined cells will be stored in the result. The
+ * plan can be made up-front during tensor function compilation.
+ **/
+struct JoinTraversePlan {
+    std::vector<size_t> loop_cnt;
+    std::vector<size_t> lhs_stride;
+    std::vector<size_t> rhs_stride;
+    JoinTraversePlan(const ValueType &lhs_type, const ValueType &rhs_type);
+};
+
+/**
+ * Information about how mapped dimensions overlap between two values,
+ * represented as where each of the output dimensions of a join would
+ * come from. This can be calculated up-front during tensor function
+ * compilation.
+ **/
+struct JoinMappedOverlap {
+    enum class Source { LHS, RHS, BOTH };
+    std::vector<Source> sources;
+    JoinMappedOverlap(const ValueType &lhs_type, const ValueType &rhs_type);
+};
+
+/**
  * Generic join operation treating both values as mixed
  * tensors. Packaging will change, and while the baseline join will
  * not have information about low-level value class implementations,

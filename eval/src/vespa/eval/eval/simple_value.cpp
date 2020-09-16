@@ -2,8 +2,10 @@
 
 #include "simple_value.h"
 #include "tensor_spec.h"
-#include <vespa/vespalib/util/stash.h>
+#include "inline_operation.h"
 #include <vespa/vespalib/util/typify.h>
+#include <vespa/vespalib/util/visit_ranges.h>
+#include <vespa/vespalib/util/overload.h>
 
 #include <vespa/log/log.h>
 LOG_SETUP(".eval.simple_value");
@@ -166,6 +168,27 @@ public:
     }
 };
 
+// Treats all values as mixed tensors. Needs output cell type as well
+// as input cell types since output cell type cannot always be
+// directly inferred.
+
+struct GenericJoin {
+    template <typename LCT, typename RCT, typename OCT, typename Fun> static std::unique_ptr<NewValue>
+    invoke(const NewValue &a, const NewValue &b, join_fun_t function,
+           const JoinTraversePlan &plan, const ValueType &res_type, const ValueBuilderFactory &factory)
+    {
+        Fun fun(function);
+        auto builder = factory.create_value_builder<OCT>(res_type);
+        bool swap = (b.index().size() < a.index().size());
+        (void) fun;
+        (void) swap;
+        (void) a;
+        (void) b;
+        (void) plan;
+        return builder->build(std::move(builder));
+    }
+};
+
 }
 
 //-----------------------------------------------------------------------------
@@ -234,12 +257,72 @@ SimpleValueBuilderFactory::create_value_builder_base(const ValueType &type,
 
 //-----------------------------------------------------------------------------
 
+JoinTraversePlan::JoinTraversePlan(const ValueType &lhs_type, const ValueType &rhs_type)
+    : loop_cnt(), lhs_stride(), rhs_stride()
+{
+    enum class Case { NONE, LHS, RHS, BOTH };
+    Case prev_case = Case::NONE;
+    auto update_plan = [&](Case my_case, size_t my_size, size_t in_lhs, size_t in_rhs) {
+        if (my_case == prev_case) {
+            assert(!loop_cnt.empty());
+            loop_cnt.back() *= my_size;
+        } else {
+            loop_cnt.push_back(my_size);
+            lhs_stride.push_back(in_lhs);
+            rhs_stride.push_back(in_rhs);
+            prev_case = my_case;
+        }
+    };
+    auto visitor = overload
+                   {
+                       [&](visit_ranges_first, const auto &a) { update_plan(Case::LHS, a.size, 1, 0); },
+                       [&](visit_ranges_second, const auto &b) { update_plan(Case::RHS, b.size, 0, 1); },
+                       [&](visit_ranges_both, const auto &a, const auto &) { update_plan(Case::BOTH, a.size, 1, 1); }
+                   };
+    auto lhs_dims = lhs_type.nontrivial_indexed_dimensions();
+    auto rhs_dims = rhs_type.nontrivial_indexed_dimensions();
+    visit_ranges(visitor, lhs_dims.begin(), lhs_dims.end(), rhs_dims.begin(), rhs_dims.end(),
+                 [](const auto &a, const auto &b){ return (a.name < b.name); });
+    size_t lhs_size = 1;
+    size_t rhs_size = 1;
+    for (size_t i = loop_cnt.size(); i-- > 0; ) {
+        if (lhs_stride[i]) {
+            lhs_stride[i] = lhs_size;
+            lhs_size *= loop_cnt[i];
+        }
+        if (rhs_stride[i]) {
+            rhs_stride[i] = rhs_size;
+            rhs_size *= loop_cnt[i];
+        }
+    }
+}
+
+//-----------------------------------------------------------------------------
+
+JoinMappedOverlap::JoinMappedOverlap(const ValueType &lhs_type, const ValueType &rhs_type)
+    : sources()
+{
+    auto visitor = overload
+                   {
+                       [&](visit_ranges_first, const auto &) { sources.push_back(Source::LHS); },
+                       [&](visit_ranges_second, const auto &) { sources.push_back(Source::RHS); },
+                       [&](visit_ranges_both, const auto &, const auto &) { sources.push_back(Source::BOTH); }
+                   };
+    auto lhs_dims = lhs_type.mapped_dimensions();
+    auto rhs_dims = rhs_type.mapped_dimensions();
+    visit_ranges(visitor, lhs_dims.begin(), lhs_dims.end(), rhs_dims.begin(), rhs_dims.end(),
+                 [](const auto &a, const auto &b){ return (a.name < b.name); });
+}
+
+//-----------------------------------------------------------------------------
+
+using JoinTypify = TypifyValue<TypifyCellType,operation::TypifyOp2>;
+
 std::unique_ptr<NewValue> new_join(const NewValue &a, const NewValue &b, join_fun_t function, const ValueBuilderFactory &factory) {
-    (void) a;
-    (void) b;
-    (void) function;
-    (void) factory;
-    return std::unique_ptr<NewValue>(nullptr);
+    auto res_type = ValueType::join(a.type(), b.type());
+    JoinTraversePlan plan(a.type(), b.type());
+    return typify_invoke<4,JoinTypify,GenericJoin>(a.type().cell_type(), b.type().cell_type(), res_type.cell_type(), function,
+                                                   a, b, function, plan, res_type, factory);
 }
 
 //-----------------------------------------------------------------------------
