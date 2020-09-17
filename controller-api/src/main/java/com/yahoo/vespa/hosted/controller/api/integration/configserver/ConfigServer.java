@@ -1,6 +1,7 @@
 // Copyright 2018 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.controller.api.integration.configserver;
 
+import com.yahoo.collections.Pair;
 import com.yahoo.component.Version;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.zone.ZoneId;
@@ -54,6 +55,16 @@ public interface ConfigServer {
      * If the "hostname" query parameter is present, it limits the entries to be from that host.
      */
     InputStream getLogs(DeploymentId deployment, Map<String, String> queryParameters);
+
+    /**
+     * Gets the contents of a file inside the current application package for a given deployment. If the path is to
+     * a directly, a JSON list with URLs to contents is returned.
+     *
+     * @param deployment deployment to get application package content for
+     * @param path path within package to get
+     * @return content type and the content itself of the requested path
+     */
+    Pair<String, String> getApplicationPackageContent(DeploymentId deployment, String path);
 
     List<ClusterMetrics> getDeploymentMetrics(DeploymentId deployment);
 
